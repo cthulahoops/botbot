@@ -58,6 +58,18 @@ def pronoun_verb(pronoun, verb):
     return f"{pronoun} {verb}{'s' if pronoun in ('we', 'they') else ''}"
 
 
+def parse_introduction(content):
+    match = re.search(
+        r"introduce.+?to @\*\*([^']+)\*\*\s*[,.] (\w+) .*?about (.+?)(?:\.|$)",
+        content,
+        re.IGNORECASE,
+    )
+    if match:
+        (name, pronoun, topics) = match.groups()
+        topics = stemmed_words(topics)
+
+    return Bot(name=name, pronoun=pronoun.lower(), topics=topics)
+
 @dataclass
 class Bot:
     name: str
@@ -162,24 +174,14 @@ class BotBot:
         bot_handler.send_reply(message, reply)
 
     def handle_introduction(self, content):
-        match = re.search(
-            r"introduce.+?to @\*\*([^']+)\*\*\s*[,.] (\w+) .*?about (.+?)(?:\.|$)",
-            content,
-            re.IGNORECASE,
-        )
-        if match:
-            (name, pronoun, topics) = match.groups()
-            topics = stemmed_words(topics)
-
-            new, new_topics = self.db.add_bot(
-                Bot(name=name, pronoun=pronoun.lower(), topics=topics)
-            )
+        bot = parse_introduction(content)
+        if bot:
+            new, new_topics = self.db.add_bot(bot)
             if new:
-                return f"Thanks! I love meeting new people and can't wait to talk to {accusative(pronoun)}."
-            elif new_topics:
-                return f"Thank you! I already know { name }, but didn't know { pronoun  } knew about {' '.join( new_topics )}."
-            else:
-                return f"Thank you! I already know { name }. They are { random.choice(compliments) }!"
+                return f"Thanks! I love meeting new people and can't wait to talk to {accusative(bot.pronoun)}."
+            if new_topics:
+                return f"Thank you! I already know { bot.name }, but didn't know { bot.pronoun  } knew about {' '.join( new_topics )}."
+            return f"Thank you! I already know { bot.name }. They are { random.choice(compliments) }!"
         return "I love to meet new people, but I don't understand."
 
     def handle_forgetfulness(self, content):
@@ -191,7 +193,7 @@ class BotBot:
         return "Who should I forget?"
 
 
-class TestHandler:
+class FakeHandler:
     def __init__(self):
         self.replies = []
 
@@ -201,7 +203,7 @@ class TestHandler:
 
 def test_add_pairing():
     bot = BotBot(":memory:")
-    handler = TestHandler()
+    handler = FakeHandler()
     bot.handle_message(
         {
             "content": "I'd like to introduce you to @**Pairing Bot**, she knows about pair and pearing",
@@ -217,7 +219,7 @@ def test_add_pairing():
 
 def test_forget():
     bot = BotBot(":memory:")
-    handler = TestHandler()
+    handler = FakeHandler()
     bot.db.add_bot(Bot(name="bad bot", pronoun="he", topics=["swearing", "shouting"]))
 
     bot.handle_message(
