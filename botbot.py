@@ -41,14 +41,14 @@ def accusative(nominative):
 
 
 def stem(word):
-    return re.sub("(s|ings?)$", "", word)
+    return re.sub("(s|ings?|ion)$", "", word)
 
 
 def stemmed_words(text):
     return [
         stem(word.lower())
         for word in re.split(r"\W+", text)
-        if word and word not in common_words
+        if word and word.lower() not in common_words
     ]
 
 
@@ -57,18 +57,27 @@ def pronoun_verb(pronoun, verb):
         return f"{pronoun} {be[pronoun]}"
     return f"{pronoun} {verb}{'s' if pronoun in ('we', 'they') else ''}"
 
+def make_comma_list(words):
+    if len(words) == 0:
+        return ""
+    return ", ".join(words[:-1]) + " and " + words[-1]
+
 
 def parse_introduction(content):
     match = re.search(
-        r"introduce.+?to @\*\*([^']+)\*\*\s*[,.] (\w+) .*?about (.+?)(?:\.|$)",
+            r"introduce.+?to @(?:\*\*(.+?)\*\*|(\w+))\s*[,.] (\w+) .*?about (.+?)(?:\.|$)",
         content,
         re.IGNORECASE,
     )
-    if match:
-        (name, pronoun, topics) = match.groups()
-        topics = stemmed_words(topics)
 
-    return Bot(name=name, pronoun=pronoun.lower(), topics=topics)
+    if match:
+        (name1, name2, pronoun, topics) = match.groups()
+        if pronoun == 'you':
+            pronoun = 'I'
+        else:
+            pronoun = pronoun.lower()
+        topics = stemmed_words(topics)
+        return Bot(name=(name1 or name2), pronoun=pronoun, topics=topics)
 
 @dataclass
 class Bot:
@@ -110,6 +119,11 @@ class BotDatabase:
         self.connection.commit()
         return new, new_topics
 
+    def bots(self):
+        c = self.connection.cursor()
+        c.execute("select name, pronoun from bot")
+        return (Bot(name=row[0], pronoun=row[1], topics=[]) for row in c)
+
     def lookup_topic(self, topic):
         c = self.connection.cursor()
         c.execute(
@@ -122,8 +136,19 @@ class BotDatabase:
             return None
         return Bot(name=name, pronoun=pronoun, topics=[topic])
 
+    def lookup_bot(self, name):
+        c = self.connection.cursor()
+        c.execute(
+            "select name, pronoun from bot where name = ?",
+            (name,),
+        )
+        try:
+            (name, pronoun) = c.fetchone()
+        except TypeError:
+            return None
+        return Bot(name=name, pronoun=pronoun, topics=[])
+
     def delete_bot(self, name):
-        print(name)
         c = self.connection.cursor()
         c.execute("delete from bot where name = ?", (name,))
         self.connection.commit()
@@ -138,7 +163,36 @@ class BotBot:
         self.db = BotDatabase(db_path)
 
     def usage(self):
-        return """Your description of the bot"""
+        return "BotBot! The Bot for learning about bots."
+
+    def help(self):
+        return """Hi, and thanks for asking!
+
+I'm BotBot, and I'm here to help you find helpful bots. I like to try and figure out what you
+mean if you just speak naturally, but really I'm just spotting keywords.
+
+You could say:
+
+"Hey, which bot would be a good example in usage notes?"
+
+or just:
+
+"example"
+
+Ask "Who do you know?" to get a list of bots.
+If you know a new bot you could say something like:
+
+"Hi, I absolutely must introduce you to @**Example Bot**, they are all about examples and usage
+instructions."
+
+(The syntax is "introduce to <mention name>, <pronoun> about <list of topics>")
+
+Delete a bot with:
+
+"Forget about @**Example Bot**, he doesn't actually exist."
+
+(The syntax is "forget <name>".)
+"""
 
     def who_can(self, words):
         for word in words:
@@ -153,7 +207,7 @@ class BotBot:
         return f"My friend {mention(bot.name)} can help you with that. {bot.pronoun.title()} {be[bot.pronoun]} { random.choice(compliments) }."
 
     def handle_message(self, message, bot_handler):
-        logging.info(message['content'])
+        logging.info("Received message: %r", message)
         if "-bot@" in message["sender_email"]:
             logging.info("Dropping message from a bot!")
             # Bots don't talk to bots to each other where humans can hear.
@@ -164,8 +218,13 @@ class BotBot:
         reply = ""
         if words[0] == "thank":
             reply = random.choice(welcomes)
+        elif words[0] == "help":
+            reply = self.help()
         elif words[0] == "forget":
             reply = self.handle_forgetfulness(message["content"])
+        elif message['content'].lower().startswith("who do you know"):
+            bots = make_comma_list([mention(bot.name) for bot in self.db.bots()])
+            reply = f"I know everyone: {bots}."
         elif "introduce" in words:
             reply = self.handle_introduction(message["content"])
         else:
@@ -185,11 +244,16 @@ class BotBot:
         return "I love to meet new people, but I don't understand."
 
     def handle_forgetfulness(self, content):
-        match = re.search(r"forget.+@\*\*([^']+)\*\*", content, re.IGNORECASE)
+        match = re.search(r"forget.+@(?:\*\*(.+?)\*\*|(\w+))", content, re.IGNORECASE)
         if match:
-            name = match.group(1)
-            self.db.delete_bot(name)
-            return f"I'll never speak of {name} again."
+            name = match.group(1) or match.group(2)
+            bot = self.db.lookup_bot(name)
+            if bot.pronoun == "I":
+                return "I'm unforgettable."
+            if bot:
+                self.db.delete_bot(name)
+                return f"I'll never speak of {name} again."
+            return "I'm don't remember if I ever knew them."
         return "Who should I forget?"
 
 
@@ -206,15 +270,28 @@ def test_add_pairing():
     handler = FakeHandler()
     bot.handle_message(
         {
-            "content": "I'd like to introduce you to @**Pairing Bot**, she knows about pair and pearing",
+            "content": "I'd like to introduce you to @**Pairing Bot!**, she knows about pair and pearing",
             "sender_email": "test",
         },
         handler,
     )
 
     assert handler.replies[0].startswith("Thanks")
-    assert bot.db.lookup_topic("pear").name == "Pairing Bot"
+    assert bot.db.lookup_topic("pear").name == "Pairing Bot!"
     assert bot.db.lookup_topic("pair").pronoun == "she"
+
+def test_parse_introduction():
+    bot = parse_introduction("I'd like to introduce you to @**Pairing Bot!**, she knows about pair and pearing")
+
+    assert bot.name == "Pairing Bot!"
+    assert bot.pronoun == "she"
+    assert bot.topics == ["pair", "pear"]
+
+    bot = parse_introduction("I'd like to introduce you to @BotBot, you know about bots.")
+
+    assert bot.name == "BotBot"
+    assert bot.pronoun == "I"
+    assert bot.topics == ["bot"]
 
 
 def test_forget():
@@ -227,7 +304,6 @@ def test_forget():
     )
     assert handler.replies[0] == "I'll never speak of bad bot again."
     assert bot.db.lookup_topic("swearing") is None
-
 
 handler_class = BotBot
 
