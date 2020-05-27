@@ -57,6 +57,7 @@ def pronoun_verb(pronoun, verb):
         return f"{pronoun} {be[pronoun]}"
     return f"{pronoun} {verb}{'s' if pronoun in ('we', 'they') else ''}"
 
+
 def make_comma_list(words):
     if len(words) == 0:
         return ""
@@ -65,25 +66,27 @@ def make_comma_list(words):
 
 def parse_introduction(content):
     match = re.search(
-            r"introduce.+?to @(?:\*\*(.+?)\*\*|(\w+))\s*[,.] (\w+) .*?about (.+?)(?:\.|$)",
+        r"introduce.+?to @(?:\*\*(.+?)\*\*|(\w+))\s*[,.] (\w+) .*?about (.+?)(?:\.|$)",
         content,
         re.IGNORECASE,
     )
 
     if match:
         (name1, name2, pronoun, topics) = match.groups()
-        if pronoun == 'you':
-            pronoun = 'I'
+        if pronoun == "you":
+            pronoun = "I"
         else:
             pronoun = pronoun.lower()
         topics = stemmed_words(topics)
         return Bot(name=(name1 or name2), pronoun=pronoun, topics=topics)
+
 
 @dataclass
 class Bot:
     name: str
     pronoun: str
     topics: list
+
 
 class BotDatabase:
     def __init__(self, db_path):
@@ -139,8 +142,7 @@ class BotDatabase:
     def lookup_bot(self, name):
         c = self.connection.cursor()
         c.execute(
-            "select name, pronoun from bot where name = ?",
-            (name,),
+            "select name, pronoun from bot where name = ?", (name,),
         )
         try:
             (name, pronoun) = c.fetchone()
@@ -222,7 +224,7 @@ Delete a bot with:
             reply = self.help()
         elif words[0] == "forget":
             reply = self.handle_forgetfulness(message["content"])
-        elif message['content'].lower().startswith("who do you know"):
+        elif message["content"].lower().startswith("who do you know"):
             bots = make_comma_list([mention(bot.name) for bot in self.db.bots()])
             reply = f"I know everyone: {bots}."
         elif "introduce" in words:
@@ -280,14 +282,19 @@ def test_add_pairing():
     assert bot.db.lookup_topic("pear").name == "Pairing Bot!"
     assert bot.db.lookup_topic("pair").pronoun == "she"
 
+
 def test_parse_introduction():
-    bot = parse_introduction("I'd like to introduce you to @**Pairing Bot!**, she knows about pair and pearing")
+    bot = parse_introduction(
+        "I'd like to introduce you to @**Pairing Bot!**, she knows about pair and pearing"
+    )
 
     assert bot.name == "Pairing Bot!"
     assert bot.pronoun == "she"
     assert bot.topics == ["pair", "pear"]
 
-    bot = parse_introduction("I'd like to introduce you to @BotBot, you know about bots.")
+    bot = parse_introduction(
+        "I'd like to introduce you to @BotBot, you know about bots."
+    )
 
     assert bot.name == "BotBot"
     assert bot.pronoun == "I"
@@ -304,6 +311,7 @@ def test_forget():
     )
     assert handler.replies[0] == "I'll never speak of bad bot again."
     assert bot.db.lookup_topic("swearing") is None
+
 
 handler_class = BotBot
 
