@@ -105,7 +105,7 @@ class BotDatabase:
             new = True
         except sqlite3.IntegrityError:
             c = self.connection.cursor()
-            c.execute("select id from bot where name = bot.name")
+            c.execute("select id from bot where name = ?", (bot.name,))
             (bot_id,) = c.fetchone()
             new = False
         new_topics = []
