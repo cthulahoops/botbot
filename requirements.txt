@@ -1,0 +1,2 @@
+zulip-bots==0.7.0
+pytest==5.4.2
